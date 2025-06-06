@@ -4,12 +4,24 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import sys
 import os
+import onnxruntime as ort
+import logging
+import time
+import psutil
+from pathlib import Path
 
 # Add the parent directory to the path to enable imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import settings
 from app.api.v1.router import api_router
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO if settings.DEBUG else logging.WARNING,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("facesocial")
 
 # Create FastAPI instance
 app = FastAPI(
@@ -86,6 +98,59 @@ async def options_handler():
             "Access-Control-Allow-Headers": "*",
         }
     )
+
+# App startup and shutdown events for proper lifecycle management
+@app.on_event("startup")
+async def startup_event():
+    """Initialize resources on app startup"""
+    # Log system information
+    logger.info(f"🚀 Starting {settings.PROJECT_NAME} v{settings.VERSION}")
+    logger.info(f"⚙️ Environment: {settings.ENVIRONMENT}")
+    
+    # Check if model directory exists
+    models_path = Path(settings.MODELS_PATH)
+    if models_path.exists():
+        logger.info(f"✅ Model directory found: {models_path}")
+        # Log available models
+        for model_type in ["face-detection", "face-recognition", "deepfake-detection", "anti-spoofing"]:
+            model_dir = models_path / model_type
+            if model_dir.exists():
+                models = list(model_dir.glob("*.onnx"))
+                logger.info(f"📦 Found {len(models)} models in {model_type}: {[m.name for m in models]}")
+            else:
+                logger.warning(f"⚠️ Model directory not found: {model_dir}")
+    else:
+        logger.error(f"❌ Model directory not found: {models_path}")
+    
+    # Log ONNX Runtime information
+    logger.info(f"🔧 ONNX Runtime version: {ort.__version__}")
+    providers = ort.get_available_providers()
+    logger.info(f"🔌 Available ONNX Runtime providers: {providers}")
+    
+    # Pre-load ONNX DLLs for better performance
+    try:
+        ort.preload_dlls()
+        logger.info("✅ ONNX Runtime DLLs preloaded successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to preload ONNX Runtime DLLs: {e}")
+    
+    # Log system resources
+    try:
+        mem = psutil.virtual_memory()
+        logger.info(f"💾 System memory: {mem.total / (1024**3):.2f} GB total, {mem.available / (1024**3):.2f} GB available")
+        if 'CUDAExecutionProvider' in providers:
+            logger.info(f"🎮 GPU VRAM limit set to: {settings.VRAM_LIMIT_MB} MB")
+    except Exception as e:
+        logger.warning(f"⚠️ Error getting system resources: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup resources on app shutdown"""
+    logger.info(f"🛑 Shutting down {settings.PROJECT_NAME}")
+    
+    # Add cleanup code if needed
+    
+    logger.info("👋 Shutdown complete")
 
 if __name__ == "__main__":
     uvicorn.run(

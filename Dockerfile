@@ -1,43 +1,19 @@
-# Backend Dockerfile
-FROM python:3.11-slim
+# Backend Dockerfile - Multi-stage build for optimal production deployment
+# Stage 1: Build environment
+FROM nvidia/cuda:12.2-devel-ubuntu22.04 AS builder
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies for OpenCV, ML libraries, PyTorch, and dlib
+WORKDIR /build
 RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    curl \
-    wget \
-    build-essential \
-    cmake \
-    libgl1-mesa-glx \
-    libgl1-mesa-dev \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgtk-3-0 \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libgstreamer1.0-0 \
-    libgstreamer-plugins-base1.0-0 \
-    python3-opencv \
-    libjpeg-dev \
-    libpng-dev \
-    libtiff-dev \
-    libopenjp2-7-dev \
-    libboost-all-dev \
-    libx11-dev \
-    libatlas-base-dev \
-    libgtk-3-dev \
-    libboost-python-dev \
-    libopenblas-dev \
-    liblapack-dev \
-    pkg-config \
+    python3-dev python3-pip build-essential cmake \
+    gcc g++ curl wget \
+    libgl1-mesa-glx libgl1-mesa-dev libglib2.0-0 \
+    libsm6 libxext6 libxrender-dev libgomp1 \
+    libgtk-3-0 libavcodec-dev libavformat-dev libswscale-dev \
+    libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+    python3-opencv libjpeg-dev libpng-dev libtiff-dev \
+    libopenjp2-7-dev libboost-all-dev libx11-dev \
+    libatlas-base-dev libgtk-3-dev libboost-python-dev \
+    libopenblas-dev liblapack-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for ONNX Runtime and PyTorch - Optimize for multi-core

@@ -46,9 +46,16 @@ class Settings(BaseSettings):    # Project Info
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
-      # AI Models (Phase 3)
+    
+    # AI Models
     MODELS_PATH: str = "/app/model"
     VRAM_LIMIT_MB: int = 6144  # 6GB
+    
+    # ONNX Runtime Optimization
+    OMP_NUM_THREADS: int = 8  # Default to 8 threads for CPU operations
+    OPENBLAS_NUM_THREADS: int = 8  # For matrix operations
+    MKL_NUM_THREADS: int = 8  # For Intel MKL optimizations
+    MODEL_UNLOAD_TIMEOUT: int = 300  # 5 minutes of inactivity before unloading
     
     class Config:
         env_file = ".env"

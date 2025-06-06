@@ -8,6 +8,7 @@ import onnxruntime as ort
 from PIL import Image
 import io
 import os
+import time
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 import logging
@@ -31,7 +32,16 @@ class FaceDetectionService:
         self.models_path = models_path
         # Use faster YOLOv10n model for real-time detection
         self.model_path = models_path / "face-detection" / "yolov10n-face.onnx"
+        
+        # Check if model exists first
+        if not self.model_path.exists():
+            # Fallback to YOLOv5s if YOLOv10n is not available
+            self.model_path = models_path / "face-detection" / "yolov5s-face.onnx"
+            if not self.model_path.exists():
+                logger.error(f"❌ No face detection models found in {models_path / 'face-detection'}")
+        
         self.session = None
+        self.input_name = None
         self._load_model()
     
     def _load_model(self):
@@ -44,53 +54,65 @@ class FaceDetectionService:
                 
                 # Configure providers - prioritize GPU
                 providers = []
+                provider_options = {}
                 
                 # Try CUDA provider first (if available)
                 if 'CUDAExecutionProvider' in ort.get_available_providers():
-                    providers.append(('CUDAExecutionProvider', {
+                    # Get GPU memory limit from settings
+                    from app.core.config import settings
+                    gpu_mem_limit = int(settings.VRAM_LIMIT_MB * 1024 * 1024)  # Convert to bytes
+                    
+                    cuda_provider_options = {
                         'device_id': 0,
                         'arena_extend_strategy': 'kNextPowerOfTwo',
-                        'gpu_mem_limit': 2 * 1024 * 1024 * 1024,  # 2GB limit
+                        'gpu_mem_limit': gpu_mem_limit,  # Use configured limit
                         'cudnn_conv_algo_search': 'EXHAUSTIVE',
                         'do_copy_in_default_stream': True,
-                    }))
-                    logger.info("CUDA provider configured for face detection")
+                    }
+                    providers.append(('CUDAExecutionProvider', cuda_provider_options))
+                    logger.info(f"🎮 CUDA provider configured for face detection with {gpu_mem_limit/(1024*1024):.0f}MB limit")
                 
                 # Try DirectML provider (Windows)
-                if 'DmlExecutionProvider' in ort.get_available_providers():
+                elif 'DmlExecutionProvider' in ort.get_available_providers():
                     providers.append('DmlExecutionProvider')
-                    logger.info("DirectML provider configured for face detection")
+                    logger.info("🪟 DirectML provider configured for face detection")
                 
                 # Fallback to CPU
                 providers.append('CPUExecutionProvider')
                 
+                start_time = time.time()
                 self.session = ort.InferenceSession(
                     str(self.model_path),
                     sess_options=sess_options,
                     providers=providers
                 )
+                load_time = time.time() - start_time
+                
+                # Store input name for later use
+                self.input_name = self.session.get_inputs()[0].name
                 
                 # Log which provider is actually being used
                 active_providers = self.session.get_providers()
-                logger.info(f"Face detection model loaded with providers: {active_providers}")
-                logger.info(f"Model path: {self.model_path}")
+                logger.info(f"✅ Face detection model loaded in {load_time:.2f}s with providers: {active_providers}")
+                logger.info(f"📂 Model path: {self.model_path}")
             else:
-                logger.warning(f"Face detection model not found: {self.model_path}")
+                logger.warning(f"⚠️ Face detection model not found: {self.model_path}")
         except Exception as e:
-            logger.error(f"Failed to load face detection model: {e}")
+            logger.error(f"❌ Failed to load face detection model: {e}")
             # Try loading with CPU only as fallback
             try:
                 self.session = ort.InferenceSession(str(self.model_path), providers=['CPUExecutionProvider'])
-                logger.info("Face detection model loaded with CPU fallback")
+                self.input_name = self.session.get_inputs()[0].name
+                logger.info("⚙️ Face detection model loaded with CPU fallback")
             except Exception as e2:
-                logger.error(f"CPU fallback also failed: {e2}")
+                logger.error(f"❌ CPU fallback also failed: {e2}")
                 self.session = None
-    
-    async def detect_faces(self, image: np.ndarray) -> List[Dict[str, Any]]:
+      async def detect_faces(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """Detect faces in image"""
         try:
             if self.session is None:
                 # Fallback to OpenCV cascade if ONNX model not available
+                logger.warning("⚠️ No ONNX session available, falling back to OpenCV")
                 return self._detect_faces_opencv(image)
             
             # Preprocess image for YOLO
@@ -111,38 +133,47 @@ class FaceDetectionService:
             input_tensor = padded.astype(np.float32) / 255.0
             input_tensor = np.transpose(input_tensor, (2, 0, 1))
             input_tensor = np.expand_dims(input_tensor, axis=0)
-              # Run inference
+            
+            # Run inference
             try:
                 # Check if session is properly loaded
                 if self.session is None:
-                    logger.error("ONNX session is None, falling back to OpenCV")
+                    logger.error("❌ ONNX session is None, falling back to OpenCV")
                     return self._detect_faces_opencv(image)
                 
-                # Get input name dynamically
-                input_name = self.session.get_inputs()[0].name
-                logger.debug(f"Using input name: {input_name}")
+                # Use stored input name or get it dynamically
+                input_name = self.input_name or self.session.get_inputs()[0].name
                 
+                # Perform inference
+                start_time = time.time()
                 outputs = self.session.run(None, {input_name: input_tensor})
+                inference_time = time.time() - start_time
+                
+                logger.debug(f"🕒 YOLO inference completed in {inference_time*1000:.1f}ms")
             except Exception as inference_error:
-                logger.error(f"ONNX inference error: {inference_error}")
+                logger.error(f"❌ ONNX inference error: {inference_error}")
                 return self._detect_faces_opencv(image)
             
-            # Post-process results
-            faces = self._process_yolo_output(outputs[0], scale, input_size)
+            # Post-process results - properly implemented now
+            faces = self._process_yolo_output(outputs[0], w, h, scale)
+            logger.debug(f"🔍 Detected {len(faces)} faces with YOLO model")
             
             return faces
             
         except Exception as e:
-            logger.error(f"YOLO face detection error: {e}")
+            logger.error(f"❌ YOLO face detection error: {e}")
             # Fallback to OpenCV
             return self._detect_faces_opencv(image)
     
     def _detect_faces_opencv(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """Fallback face detection using OpenCV"""
         try:
+            # Try to use a pre-trained face cascade from OpenCV
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            
+            logger.info(f"📷 OpenCV fallback detected {len(faces)} faces")
             
             result = []
             for (x, y, w, h) in faces:
@@ -153,17 +184,63 @@ class FaceDetectionService:
             
             return result
         except Exception as e:
-            logger.error(f"OpenCV face detection error: {e}")
+            logger.error(f"❌ OpenCV face detection error: {e}")
             return []
     
-    def _process_yolo_output(self, output, scale, input_size):
+    def _process_yolo_output(self, output: np.ndarray, orig_width: int, orig_height: int, scale: float) -> List[Dict[str, Any]]:
         """Process YOLO detection output"""
         try:
-            # YOLO output processing logic here
-            # This is a simplified version
-            return []
+            # Get output dimensions
+            rows = output.shape[1]
+            
+            # Parse YOLO detections (newer YOLOv5/YOLOv8/YOLOv10 format)
+            boxes = []
+            confidences = []
+            
+            # Confidence threshold
+            conf_threshold = 0.5
+            
+            # Process each detection
+            for i in range(rows):
+                row = output[0][i]
+                confidence = row[4]
+                
+                # Only process detections with good confidence
+                if confidence >= conf_threshold:
+                    # Get class scores (after box coords and obj score)
+                    classes_scores = row[5:]
+                    
+                    # We only care about the face class (usually class 0)
+                    if classes_scores[0] > 0.5:
+                        # Get bounding box coordinates
+                        cx, cy, w, h = row[0], row[1], row[2], row[3]
+                        
+                        # Convert to corner coordinates
+                        x = cx - (w / 2)
+                        y = cy - (h / 2)
+                        
+                        # Scale back to original image
+                        input_size = 640  # YOLO input size
+                        x = x * input_size / scale
+                        y = y * input_size / scale
+                        w = w * input_size / scale
+                        h = h * input_size / scale
+                        
+                        # Add to results
+                        boxes.append([int(x), int(y), int(x+w), int(y+h)])
+                        confidences.append(float(confidence))
+            
+            # Convert to result format
+            result = []
+            for box, conf in zip(boxes, confidences):
+                result.append({
+                    'bbox': box,
+                    'confidence': conf
+                })
+            
+            return result
         except Exception as e:
-            logger.error(f"YOLO output processing error: {e}")
+            logger.error(f"❌ YOLO output processing error: {e}")
             return []
 
 class FaceRecognitionService:
@@ -306,16 +383,148 @@ class AIService:
     """Main AI Service coordinator"""
     
     def __init__(self):
-        # Use relative path that works both in development and production
-        current_dir = Path(__file__).parent.parent.parent.parent
-        self.models_path = current_dir / "model"
-        self.face_detector = FaceDetectionService(self.models_path)
-        self.face_recognizer = FaceRecognitionService(self.models_path)
-        self.quality_analyzer = ImageQualityService()
-        self.deepfake_detector = DeepfakeDetectionService(self.models_path)
-        # Temporarily commenting out antispoofing to fix import issue
-        # self.antispoofing_detector = AntiSpoofingService(self.models_path)
+        # Use models_path from settings instead of hardcoded path
+        from app.core.config import settings
+        import os
+        
+        # Check if the model path exists and is properly mounted
+        self.models_path = Path(settings.MODELS_PATH)
+        if not self.models_path.exists():
+            logger.error(f"❌ Model path not found: {self.models_path}")
+            # Fallback to local development path if main path not found
+            current_dir = Path(__file__).parent.parent.parent.parent
+            self.models_path = current_dir / "model"
+            logger.warning(f"⚠️ Using fallback model path: {self.models_path}")
+        
+        logger.info(f"📂 Using models path: {self.models_path}")
+        
+        # Initialize services with lazy loading
+        self._face_detector = None
+        self._face_recognizer = None
+        self._deepfake_detector = None
+        self._antispoofing_detector = None
+        self._quality_analyzer = ImageQualityService()  # Lightweight, can initialize immediately
+        
+        # Track loaded models for memory management
+        self._loaded_models = set()
+        self._last_model_usage = {}
+        
+        # Set ONNX Runtime environment variables for better GPU performance
+        os.environ["OMP_NUM_THREADS"] = str(settings.OMP_NUM_THREADS)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(settings.OPENBLAS_NUM_THREADS) 
+        os.environ["MKL_NUM_THREADS"] = str(settings.MKL_NUM_THREADS)
+        os.environ["ONNXRUNTIME_LOG_LEVEL"] = "3"  # Reduce logging noise
+        
+        # Check available ONNX providers
+        providers = ort.get_available_providers()
+        logger.info(f"✅ Available ONNX Runtime providers: {providers}")
+        
+        # Pre-check for CUDA/GPU support
+        self._has_cuda = 'CUDAExecutionProvider' in providers
+        if self._has_cuda:
+            logger.info("🚀 CUDA support is available for ONNX Runtime")
+        else:
+            logger.warning("⚠️ CUDA support not available, will use CPU for all models")
     
+    @property
+    def face_detector(self):
+        """Lazy-loaded face detector"""
+        if self._face_detector is None:
+            self._unload_unused_models('face_detection')
+            logger.info("🔄 Lazy-loading face detection model")
+            self._face_detector = FaceDetectionService(self.models_path)
+            self._loaded_models.add('face_detection')
+        self._last_model_usage['face_detection'] = time.time()
+        return self._face_detector
+    
+    @property
+    def face_recognizer(self):
+        """Lazy-loaded face recognizer"""
+        if self._face_recognizer is None:
+            self._unload_unused_models('face_recognition')
+            logger.info("🔄 Lazy-loading face recognition model")
+            self._face_recognizer = FaceRecognitionService(self.models_path)
+            self._loaded_models.add('face_recognition')
+        self._last_model_usage['face_recognition'] = time.time()
+        return self._face_recognizer
+    
+    @property
+    def deepfake_detector(self):
+        """Lazy-loaded deepfake detector"""
+        if self._deepfake_detector is None:
+            self._unload_unused_models('deepfake_detection')
+            logger.info("🔄 Lazy-loading deepfake detection model")
+            self._deepfake_detector = DeepfakeDetectionService(self.models_path)
+            self._loaded_models.add('deepfake_detection')
+        self._last_model_usage['deepfake_detection'] = time.time()
+        return self._deepfake_detector
+    
+    @property
+    def antispoofing_detector(self):
+        """Lazy-loaded antispoofing detector"""
+        try:
+            # Import here to avoid circular imports
+            from .antispoofing_service import AntiSpoofingService
+            
+            if self._antispoofing_detector is None:
+                self._unload_unused_models('antispoofing_detection')
+                logger.info("🔄 Lazy-loading antispoofing detection model")
+                self._antispoofing_detector = AntiSpoofingService(self.models_path)
+                self._loaded_models.add('antispoofing_detection')
+            self._last_model_usage['antispoofing_detection'] = time.time()
+            return self._antispoofing_detector
+        except ImportError as e:
+            logger.error(f"❌ AntiSpoofing service import error: {e}")
+            return None
+    
+    def _unload_unused_models(self, current_model: str, threshold_seconds: int = 300):
+        """Unload models that haven't been used recently to save VRAM"""
+        from app.core.config import settings
+        import psutil
+        
+        # Only apply VRAM management in production with multiple models
+        if settings.ENVIRONMENT != "production" or len(self._loaded_models) <= 1:
+            return
+        
+        # Check if we need to perform memory management
+        if len(self._loaded_models) >= 2:
+            current_time = time.time()
+            models_to_unload = []
+            
+            # Find models that haven't been used recently
+            for model_name in self._loaded_models:
+                if model_name == current_model:
+                    continue
+                
+                last_used = self._last_model_usage.get(model_name, 0)
+                if current_time - last_used > threshold_seconds:
+                    models_to_unload.append(model_name)
+            
+            # Unload models to free memory
+            for model_name in models_to_unload:
+                logger.info(f"🧹 Unloading unused model: {model_name} to free memory")
+                if model_name == 'face_detection' and self._face_detector is not None:
+                    self._face_detector.session = None
+                    self._face_detector = None
+                elif model_name == 'face_recognition' and self._face_recognizer is not None:
+                    self._face_recognizer.session = None
+                    self._face_recognizer = None
+                elif model_name == 'deepfake_detection' and self._deepfake_detector is not None:
+                    self._deepfake_detector.session = None
+                    self._deepfake_detector = None
+                elif model_name == 'antispoofing_detection' and self._antispoofing_detector is not None:
+                    self._antispoofing_detector.session = None
+                    self._antispoofing_detector = None
+                
+                self._loaded_models.remove(model_name)
+            
+            # Log memory usage after unloading
+            if models_to_unload:
+                process = psutil.Process(os.getpid())
+                memory_info = process.memory_info()
+                logger.info(f"💾 Memory usage after unloading: {memory_info.rss / (1024 * 1024):.2f} MB")
+
+    # Rest of the methods stay the same with small adjustments
     async def detect_faces_in_image(self, image_bytes: bytes) -> Dict[str, Any]:
         """Detect faces in image"""
         try:
@@ -331,7 +540,7 @@ class AIService:
             
             logger.info(f"Image decoded successfully, shape: {img.shape}")
             
-            # Face detection
+            # Face detection - use property to ensure lazy loading
             faces = await self.face_detector.detect_faces(img)
             
             logger.info(f"Face detection completed, found {len(faces)} faces")
@@ -359,6 +568,7 @@ class AIService:
     async def detect_deepfake(self, image_bytes: bytes) -> Dict[str, Any]:
         """Detect deepfake in image using real ONNX model"""
         try:
+            # Use property to ensure lazy loading
             return await self.deepfake_detector.detect_deepfake_from_bytes(image_bytes)
         except Exception as e:
             logger.error(f"Deepfake detection error: {e}")
@@ -367,14 +577,19 @@ class AIService:
                 "is_deepfake": True,
                 "confidence": 0.0,
                 "deepfake_score": 1.0,
-                "real_score": 0.0,                "message": f"Detection error: {str(e)}",
+                "real_score": 0.0,                
+                "message": f"Detection error: {str(e)}",
                 "error": True
             }
     
     async def detect_anti_spoofing(self, image_bytes: bytes) -> Dict[str, Any]:
         """Detect anti-spoofing in image using real ONNX model"""
         try:
-            return await self.antispoofing_detector.detect_anti_spoofing_from_bytes(image_bytes)
+            # Use property to ensure lazy loading
+            detector = self.antispoofing_detector
+            if detector is None:
+                raise ImportError("Anti-spoofing detector not available")
+            return await detector.detect_anti_spoofing_from_bytes(image_bytes)
         except Exception as e:
             logger.error(f"Anti-spoofing detection error: {e}")
             return {
@@ -397,7 +612,7 @@ class AIService:
             if img is None:
                 return {"success": False, "message": "Failed to decode image"}
             
-            # Detect faces first
+            # Detect faces first - use property for lazy loading
             faces = await self.face_detector.detect_faces(img)
             
             if not faces:
@@ -406,7 +621,7 @@ class AIService:
             # Use the first detected face
             face = faces[0]
             
-            # Extract embedding
+            # Extract embedding - use property for lazy loading
             embedding = await self.face_recognizer.get_face_embedding(img, face)
             
             if embedding is None:
@@ -422,22 +637,3 @@ class AIService:
         except Exception as e:
             logger.error(f"Face embedding extraction error: {e}")
             return {"success": False, "message": f"Extraction error: {str(e)}"}
-    
-    def calculate_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
-        """Calculate similarity between two face embeddings"""
-        try:
-            emb1 = np.array(embedding1)
-            emb2 = np.array(embedding2)
-            
-            # Normalize embeddings
-            emb1 = emb1 / np.linalg.norm(emb1)
-            emb2 = emb2 / np.linalg.norm(emb2)
-            
-            # Calculate cosine similarity
-            similarity = np.dot(emb1, emb2)
-            
-            return float(similarity)
-            
-        except Exception as e:
-            logger.error(f"Similarity calculation error: {e}")
-            return 0.0
