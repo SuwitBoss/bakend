@@ -57,3 +57,8 @@ torchvision>=0.15.0
 # Additional CV libraries for glasses detection
 mediapipe==0.10.9
 # Note: dlib is installed separately in Dockerfile
+
+# Additional AI/ML for caption generation, sentiment analysis, and hashtag suggestions
+transformers>=4.30.0
+sentencepiece>=0.1.99
+accelerate>=0.20.0

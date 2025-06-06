@@ -127,6 +127,14 @@ async def startup_event():
     logger.info(f"🚀 Starting {settings.PROJECT_NAME} v{settings.VERSION}")
     logger.info(f"⚙️ Environment: {settings.ENVIRONMENT}")
     
+    # Initialize AI service
+    from app.api.v1.ai import ai_service
+    try:
+        await ai_service.initialize()
+        logger.info("✅ AI Service initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize AI Service: {e}")
+    
     # Check if model directory exists
     models_path = Path(settings.MODELS_PATH)
     if models_path.exists():

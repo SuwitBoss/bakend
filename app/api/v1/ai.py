@@ -277,3 +277,135 @@ async def analyze_registration_photos(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis error: {str(e)}"
         )
+
+# Request models for new endpoints
+class SentimentRequest(BaseModel):
+    text: str
+
+class HashtagRequest(BaseModel):
+    text: str
+    max_hashtags: int = 10
+
+@router.post("/generate-caption")
+async def generate_caption(
+    image: UploadFile = File(...)
+) -> Dict[str, Any]:
+    """Generate captions for uploaded images using AI"""
+    try:
+        logger.info(f"Received file for caption generation: {image.filename}, content_type: {image.content_type}")
+        
+        # Validate file type
+        if image.content_type and not image.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File must be an image, received: {image.content_type}"
+            )
+        
+        # Read image bytes
+        image_bytes = await image.read()
+        
+        if len(image_bytes) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Empty image file"
+            )
+        
+        # Generate captions
+        result = await ai_service.generate_caption(image_bytes)
+        
+        return {
+            "success": True,
+            **result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Caption generation API error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during caption generation"
+        )
+
+@router.post("/analyze-sentiment")
+async def analyze_sentiment(
+    request: SentimentRequest
+) -> Dict[str, Any]:
+    """Analyze sentiment of text content"""
+    try:
+        logger.info(f"Received text for sentiment analysis (length: {len(request.text)})")
+        
+        # Validate text
+        if not request.text or len(request.text.strip()) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text content is required"
+            )
+        
+        if len(request.text) > 2000:  # Reasonable limit for social media posts
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text content too long (maximum 2000 characters)"
+            )
+        
+        # Analyze sentiment
+        result = await ai_service.analyze_sentiment(request.text)
+        
+        return {
+            "success": True,
+            **result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Sentiment analysis API error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during sentiment analysis"
+        )
+
+@router.post("/suggest-hashtags")
+async def suggest_hashtags(
+    request: HashtagRequest
+) -> Dict[str, Any]:
+    """Suggest relevant hashtags for posts based on content"""
+    try:
+        logger.info(f"Received text for hashtag suggestions (length: {len(request.text)}, max_hashtags: {request.max_hashtags})")
+        
+        # Validate text
+        if not request.text or len(request.text.strip()) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text content is required"
+            )
+        
+        if len(request.text) > 1000:  # Reasonable limit for hashtag analysis
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text content too long (maximum 1000 characters)"
+            )
+        
+        # Validate max_hashtags
+        if request.max_hashtags < 1 or request.max_hashtags > 50:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_hashtags must be between 1 and 50"
+            )
+        
+        # Suggest hashtags
+        result = await ai_service.suggest_hashtags(request.text, request.max_hashtags)
+        
+        return {
+            "success": True,
+            **result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Hashtag suggestion API error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during hashtag suggestion"
+        )
