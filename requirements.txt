@@ -1,0 +1,59 @@
+# FastAPI Backend Requirements
+
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.13.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+email-validator==2.1.0
+
+# Cache & Session
+redis==5.0.1
+aioredis==2.0.1
+
+# HTTP Client
+httpx==0.25.2
+aiofiles==23.2.1
+
+# Development & Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-mock==3.12.0
+httpx==0.25.2
+
+# Environment & Config
+python-dotenv==1.0.0
+
+# CORS
+fastapi-cors==0.0.6
+
+# Logging
+structlog==23.2.0
+
+# AI/ML Dependencies
+onnxruntime==1.22.0
+opencv-python==4.10.0.84
+numpy==1.26.4
+pillow==10.4.0
+scikit-image==0.24.0
+psutil==5.9.6
+
+# Glasses Detection - Using available version
+glasses-detector==0.1.1
+torch>=2.0.0
+torchvision>=0.15.0
+# Additional CV libraries for glasses detection
+mediapipe==0.10.9
+# Note: dlib is installed separately in Dockerfile
