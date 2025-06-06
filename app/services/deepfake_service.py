@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 
 class DeepfakeDetectionService:
     """Deepfake detection using Xception ONNX model"""
-    
     def __init__(self, models_path: Path):
         self.models_path = models_path
         self.model_path = models_path / "deepfake-detection" / "model.onnx"
         self.session = None
         self.input_size = (299, 299)  # Xception model input size
         self._load_model()
-      def _load_model(self):
+        
+    def _load_model(self):
         """Load ONNX model with GPU acceleration when available"""
         try:
             if self.model_path.exists():
