@@ -5,11 +5,13 @@ import cv2
 from fastapi import HTTPException
 import logging
 from .antispoofing_service import AntispoofingService
+from .deepfake_service import DeepfakeDetectionService
 import io
 from PIL import Image
 import torch
 from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration
 import re
+from pathlib import Path
 
 class AIService:
     """AI Service for face detection and related operations"""
@@ -20,7 +22,10 @@ class AIService:
         self.logger = logging.getLogger(__name__)
         self.antispoofing_service = AntispoofingService()
         
-        # Initialize new AI models (will be loaded lazily)
+        # Initialize deepfake detection service
+        models_path = Path("/app/model")
+        self.deepfake_service = DeepfakeDetectionService(models_path)
+          # Initialize new AI models (will be loaded lazily)
         self.caption_processor = None
         self.caption_model = None
         self.sentiment_analyzer = None
@@ -31,7 +36,8 @@ class AIService:
         try:
             # Load face detection models
             self.face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'            )
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            )
             self.logger.info("AI Service initialized successfully")
             
             # Initialize antispoofing service
@@ -133,8 +139,7 @@ class AIService:
         try:
             # Convert bytes to image array
             image = self._bytes_to_image(image_bytes)
-            
-            # Use existing detect_faces method
+              # Use existing detect_faces method
             faces = await self.detect_faces(image)
             
             return {
@@ -161,31 +166,19 @@ class AIService:
             Deepfake detection results
         """
         try:
-            # Convert bytes to image array
+            self.logger.info("Performing deepfake detection using ONNX model...")
+            
+            # Use the deepfake detection service
+            result = await self.deepfake_service.detect_deepfake_from_bytes(image_bytes)
+            
+            # Detect faces for additional info
             image = self._bytes_to_image(image_bytes)
-            
-            # For now, implement a placeholder deepfake detection
-            # In a real implementation, this would use a trained deepfake detection model
-            self.logger.info("Performing deepfake detection...")
-            
-            # Detect faces first
             faces = await self.detect_faces(image)
             
-            # Placeholder deepfake analysis
-            deepfake_score = 0.1  # Low score indicates likely real
-            is_deepfake = deepfake_score > 0.5
+            # Add faces count to result
+            result["faces_detected"] = len(faces)
             
-            return {
-                "is_deepfake": is_deepfake,
-                "confidence": 1.0 - deepfake_score,
-                "deepfake_score": deepfake_score,
-                "faces_detected": len(faces),
-                "analysis": {
-                    "artifacts_detected": False,
-                    "compression_anomalies": False,
-                    "temporal_inconsistencies": False
-                }
-            }
+            return result
             
         except Exception as e:
             self.logger.error(f"Deepfake detection failed: {e}")
