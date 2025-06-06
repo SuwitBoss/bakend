@@ -9,9 +9,11 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 -- Set timezone
 SET timezone = 'UTC';
 
--- Create users table with proper constraints
--- Note: SQLAlchemy will handle table creation, this is just a backup/reference
--- The actual tables will be created by the application using Alembic migrations
+-- Create dedicated application user with minimal privileges
+CREATE USER facesocial_app WITH PASSWORD 'strong_random_password';
+GRANT CONNECT ON DATABASE facesocial TO facesocial_app;
+GRANT USAGE ON SCHEMA public TO facesocial_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO facesocial_app;
 
 -- Create vector-based functions for face similarity search
 CREATE OR REPLACE FUNCTION cosine_similarity(a vector, b vector) 
@@ -40,8 +42,13 @@ CREATE TABLE IF NOT EXISTS face_embeddings (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create index for fast vector similarity search
-CREATE INDEX IF NOT EXISTS face_embedding_vector_idx ON face_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- Create optimized vector indexes for face embeddings
+CREATE INDEX CONCURRENTLY ON face_embeddings 
+USING hnsw (embedding vector_cosine_ops) 
+WITH (m = 16, ef_construction = 200);
+
+-- Grant permissions to application user
+GRANT SELECT, INSERT, UPDATE, DELETE ON face_embeddings TO facesocial_app;
 
 -- Log initialization
 DO $$

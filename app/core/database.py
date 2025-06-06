@@ -1,25 +1,36 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from app.core.config import settings
+from sqlalchemy.ext.declarative import declarative_base
+from app.core.secure_config import SecureConfig
 
-# Create database engine
-engine = create_engine(
-    settings.DATABASE_URL,
-    echo=settings.ENVIRONMENT == "development",  # Enable SQL logging in development
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+# Optimized database engine configuration
+DATABASE_CONFIG = {
+    "pool_size": 20,
+    "max_overflow": 30, 
+    "pool_pre_ping": True,
+    "pool_recycle": 3600,
+    "query_cache_size": 1200,
+    "echo": False
+}
+
+engine = create_async_engine(
+    SecureConfig.get_database_url(),
+    **DATABASE_CONFIG
 )
 
-# Create SessionLocal class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+AsyncSessionLocal = sessionmaker(
+    engine, 
+    class_=AsyncSession, 
+    expire_on_commit=False
+)
 
 # Base class for models
 Base = declarative_base()
 
-# Dependency to get database session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Dependency for FastAPI
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

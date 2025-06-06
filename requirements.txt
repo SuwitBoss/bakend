@@ -10,7 +10,6 @@ pydantic-settings==2.1.0
 # Database
 sqlalchemy==2.0.23
 alembic==1.13.1
-psycopg2-binary==2.9.9
 asyncpg==0.29.0
 
 # Authentication & Security
@@ -43,7 +42,8 @@ fastapi-cors==0.0.6
 structlog==23.2.0
 
 # AI/ML Dependencies
-# onnxruntime is managed in Dockerfile (using onnxruntime-gpu)
+# Include onnxruntime directly
+onnxruntime==1.16.3
 opencv-python==4.10.0.84
 numpy==1.26.4
 pillow==10.4.0

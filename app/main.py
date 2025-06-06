@@ -33,24 +33,44 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS Configuration - More permissive for development
+# CORS Configuration - Secure for production
 origins = [
-    "http://localhost:3000",
-    "http://localhost:3001", 
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://facesocial_frontend:3000",
-    "*"  # Allow all origins for development
+    "https://facesocial.example.com",  # Specific domains only
+    "https://app.facesocial.example.com"
 ]
+
+# Add development origins if not in production
+if not settings.ENVIRONMENT == "production":
+    origins.extend([
+        "http://localhost:3000",
+        "http://localhost:3001", 
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://facesocial_frontend:3000"
+    ])
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_credentials=True,  # Only with specific origins
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type", 
+        "X-Requested-With"
+    ],
+    max_age=600,
 )
+
+# Add security headers middleware
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # Include API routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
