@@ -23,12 +23,11 @@ class DeepfakeDetectionService:
         self.session = None
         self.input_size = (299, 299)  # Xception model input size
         self._load_model()
-    
-    def _load_model(self):
-        """Load ONNX model with CPU execution"""
+      def _load_model(self):
+        """Load ONNX model with GPU acceleration when available"""
         try:
             if self.model_path.exists():
-                # Create session options for CPU optimization
+                # Create session options for optimization
                 sess_options = ort.SessionOptions()
                 sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 
@@ -37,9 +36,23 @@ class DeepfakeDetectionService:
                 sess_options.inter_op_num_threads = 0  # 0 = use all available cores
                 sess_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
                 
-                # Use CPU provider only for Docker compatibility
-                providers = ['CPUExecutionProvider']
-                logger.info("Deepfake detection service configured for CPU execution")
+                # Configure providers - prioritize GPU
+                providers = []
+                
+                # Try CUDA provider first (if available)
+                if 'CUDAExecutionProvider' in ort.get_available_providers():
+                    providers.append(('CUDAExecutionProvider', {
+                        'device_id': 0,
+                        'arena_extend_strategy': 'kNextPowerOfTwo',
+                        'gpu_mem_limit': 1 * 1024 * 1024 * 1024,  # 1GB limit for deepfake detection
+                        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                        'do_copy_in_default_stream': True,
+                    }))
+                    logger.info("CUDA provider configured for deepfake detection")
+                
+                # Fallback to CPU
+                providers.append('CPUExecutionProvider')
+                logger.info("Deepfake detection service configured with providers: " + str(providers))
                 
                 self.session = ort.InferenceSession(
                     str(self.model_path),

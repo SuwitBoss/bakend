@@ -56,8 +56,8 @@ COPY requirements.txt .
 # Install Python dependencies in stages for better caching and error handling
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch first (large dependency)
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Install PyTorch with CUDA support
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # Install core dependencies
 RUN pip install --no-cache-dir numpy opencv-python pillow
@@ -69,6 +69,23 @@ RUN pip install --no-cache-dir dlib==19.24.2 || \
 
 # Install remaining requirements
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install CUDA libraries needed for ONNX Runtime GPU
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcublas11 \
+    libcublaslt11 \
+    libcublas-dev \
+    libcudnn8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure GPU-enabled ONNX Runtime is installed (after requirements)
+RUN pip uninstall -y onnxruntime && \
+    pip install --no-cache-dir onnxruntime-gpu==1.16.0
+
+# Create symbolic links for CUDA libraries if needed
+RUN if [ ! -f /usr/local/cuda/lib64/libcublasLt.so.11 ] && [ -f /usr/local/cuda/lib64/libcublasLt.so ]; then \
+    ln -s /usr/local/cuda/lib64/libcublasLt.so /usr/local/cuda/lib64/libcublasLt.so.11; \
+    fi
 
 # Copy application code
 COPY . .

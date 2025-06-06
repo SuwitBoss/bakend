@@ -43,7 +43,7 @@ fastapi-cors==0.0.6
 structlog==23.2.0
 
 # AI/ML Dependencies
-onnxruntime==1.22.0
+# onnxruntime is managed in Dockerfile (using onnxruntime-gpu)
 opencv-python==4.10.0.84
 numpy==1.26.4
 pillow==10.4.0
