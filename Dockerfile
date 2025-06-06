@@ -70,22 +70,23 @@ RUN pip install --no-cache-dir dlib==19.24.2 || \
 # Install remaining requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install CUDA libraries needed for ONNX Runtime GPU
+# Install CUDA libraries needed for ONNX Runtime GPU (if available)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcublas11 \
-    libcublaslt11 \
-    libcublas-dev \
-    libcudnn8 \
-    && rm -rf /var/lib/apt/lists/*
+    libcublas11 libcublaslt11 libcublas-dev libcudnn8 || echo "CUDA libraries not available, continuing without them"
 
 # Ensure GPU-enabled ONNX Runtime is installed (after requirements)
 RUN pip uninstall -y onnxruntime && \
-    pip install --no-cache-dir onnxruntime-gpu==1.16.0
+    pip install --no-cache-dir onnxruntime-gpu==1.16.0 || \
+    pip install --no-cache-dir onnxruntime==1.16.0
 
-# Create symbolic links for CUDA libraries if needed
-RUN if [ ! -f /usr/local/cuda/lib64/libcublasLt.so.11 ] && [ -f /usr/local/cuda/lib64/libcublasLt.so ]; then \
-    ln -s /usr/local/cuda/lib64/libcublasLt.so /usr/local/cuda/lib64/libcublasLt.so.11; \
-    fi
+# Create symbolic links for CUDA libraries if needed (only if CUDA is available)
+RUN if [ -d /usr/local/cuda/lib64 ]; then \
+    if [ ! -f /usr/local/cuda/lib64/libcublasLt.so.11 ] && [ -f /usr/local/cuda/lib64/libcublasLt.so ]; then \
+        ln -s /usr/local/cuda/lib64/libcublasLt.so /usr/local/cuda/lib64/libcublasLt.so.11; \
+    fi; \
+else \
+    echo "CUDA not available, skipping symbolic links"; \
+fi
 
 # Copy application code
 COPY . .

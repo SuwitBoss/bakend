@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class DeepfakeDetectionService:
     """Deepfake detection using Xception ONNX model"""
+    
     def __init__(self, models_path: Path):
         self.models_path = models_path
         self.model_path = models_path / "deepfake-detection" / "model.onnx"
