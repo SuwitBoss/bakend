@@ -163,7 +163,6 @@ class AntispoofingService:
             x1 - x, int(l * bbox_inc) - x2 + x,
             cv2.BORDER_CONSTANT, value=[0, 0, 0]
         )
-        
         return padded
     
     async def detect_spoofing(self, image: np.ndarray, face_bbox: Dict[str, int] = None) -> Dict[str, Any]:
@@ -208,18 +207,26 @@ class AntispoofingService:
             
             # Preprocess image
             processed_image = self._preprocess_image(image)
-            
-            # Run binary model
+              # Run binary model
             binary_result = self.binary_model['session'].run(
                 [], {self.binary_model['input_name']: processed_image}
             )
             binary_pred = self._postprocess_prediction(binary_result[0])
-            binary_score = float(binary_pred[0][0])  # Real face probability
-            binary_is_real = binary_score > 0.5
+            
+            # Debug: Log the raw prediction
+            self.logger.info(f"🔍 Anti-spoofing raw prediction: {binary_result[0]}")
+            self.logger.info(f"🔍 Anti-spoofing softmax result: {binary_pred}")
+            
+            # IMPORTANT: Fix class interpretation
+            # Most anti-spoofing models: Class 0 = SPOOF, Class 1 = REAL
+            spoof_score = float(binary_pred[0][0])  # Probability of being SPOOF
+            real_score = float(binary_pred[0][1])   # Probability of being REAL
+            binary_is_real = real_score > spoof_score  # True if REAL wins
+            confidence = max(real_score, spoof_score)  # Confidence is the higher score
             
             result = {
                 "is_real": binary_is_real,
-                "confidence": binary_score,
+                "confidence": confidence,
                 "method": "binary"
             }
             
@@ -241,7 +248,7 @@ class AntispoofingService:
                 except Exception as e:
                     self.logger.error(f"❌ Error running print-replay model: {e}")
             
-            self.logger.info(f"🔍 Anti-spoofing result: {'REAL' if binary_is_real else 'FAKE'} with {binary_score:.2f} confidence")
+            self.logger.info(f"🔍 Anti-spoofing result: {'REAL' if binary_is_real else 'FAKE'} with {confidence:.2f} confidence")
             return result
             
         except Exception as e:

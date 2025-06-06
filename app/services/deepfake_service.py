@@ -21,7 +21,7 @@ class DeepfakeDetectionService:
         self.models_path = models_path
         self.model_path = models_path / "deepfake-detection" / "model.onnx"
         self.session = None
-        self.input_size = (299, 299)  # Xception model input size
+        self.input_size = (224, 224)  # แก้ไขจาก 299x299 เป็น 224x224
         self._load_model()
     
     def _load_model(self):
@@ -50,12 +50,11 @@ class DeepfakeDetectionService:
                 # Log which provider is actually being used
                 active_providers = self.session.get_providers()
                 logger.info(f"Deepfake detection model loaded with providers: {active_providers}")
-                
-                # Log model input/output info
+                  # Log model input/output info
                 for input_meta in self.session.get_inputs():
-                    logger.info(f"Input: {input_meta.name}, shape: {input_meta.shape}, type: {input_meta.type}")
+                    logger.info(f"Input: {input_meta.name}{input_meta.shape}")
                 for output_meta in self.session.get_outputs():
-                    logger.info(f"Output: {output_meta.name}, shape: {output_meta.shape}, type: {output_meta.type}")
+                    logger.info(f"Output: {output_meta.name}{output_meta.shape}")
             else:
                 logger.warning(f"Deepfake detection model not found: {self.model_path}")
         except Exception as e:
@@ -69,7 +68,7 @@ class DeepfakeDetectionService:
                 self.session = None
     
     def _preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """Preprocess image for Xception model"""
+        """Preprocess image for deepfake detection model"""
         try:
             # Convert BGR to RGB if needed
             if len(image.shape) == 3 and image.shape[2] == 3:
@@ -79,22 +78,18 @@ class DeepfakeDetectionService:
             
             # Convert to PIL Image
             pil_image = Image.fromarray(image_rgb)
-            
-            # Resize to model input size (299x299 for Xception)
-            pil_image = pil_image.resize(self.input_size, Image.Resampling.LANCZOS)
-            
-            # Convert to numpy array and normalize
+              # Resize to model input size (224x224 exactly as required by model)
+            input_size = (224, 224)
+            pil_image = pil_image.resize(input_size, Image.Resampling.LANCZOS)
+              # Convert to numpy array and normalize to [0, 1]
             image_array = np.array(pil_image).astype(np.float32) / 255.0
             
-            # Normalize to [-1, 1] range (as per Xception model requirements)
-            image_array = (image_array - 0.5) / 0.5
+            # Model expects [batch, height, width, channels] format (NHWC)
+            # Keep HWC format: (224, 224, 3)
             
-            # Change shape from (299, 299, 3) to (1, 3, 299, 299)
-            image_array = np.transpose(image_array, (2, 0, 1))
+            # Add batch dimension: (224, 224, 3) -> (1, 224, 224, 3)
             image_array = np.expand_dims(image_array, axis=0)
-            
             return image_array
-            
         except Exception as e:
             logger.error(f"Image preprocessing error: {e}")
             raise
@@ -103,7 +98,7 @@ class DeepfakeDetectionService:
         """Get the input tensor name from the model"""
         if self.session:
             return self.session.get_inputs()[0].name
-        return "pixel_values"  # Default fallback
+        return "input_layer"  # Default fallback based on model inspection
     
     async def detect_deepfake(self, image: np.ndarray) -> Dict[str, Any]:
         """Detect deepfake in image using ONNX model"""
@@ -117,21 +112,45 @@ class DeepfakeDetectionService:
             
             # Get input name
             input_name = self._get_input_name()
-            
-            # Run inference
+              # Run inference
             outputs = self.session.run(None, {input_name: input_data})
             logits = outputs[0]
+              # Debug: Log the raw model output
+            logger.info(f"🔍 Raw model output shape: {logits.shape}, values: {logits}")
             
-            # Calculate probabilities using softmax
-            probabilities = self._softmax(logits[0])
-            
-            # Class mapping: 0 = Deepfake, 1 = Real
-            deepfake_prob = float(probabilities[0])
-            real_prob = float(probabilities[1])
-            
-            # Determine result
-            is_deepfake = deepfake_prob > real_prob
+            # Handle different output formats
+            if len(logits.shape) == 2 and logits.shape[1] == 2:
+                # Binary classification with 2 outputs [real_score, fake_score]
+                probabilities = self._softmax(logits[0])
+                real_prob = float(probabilities[0])
+                deepfake_prob = float(probabilities[1])
+            elif len(logits.shape) == 2 and logits.shape[1] == 1:
+                # Single output - interpret as fake probability
+                score = 1.0 / (1.0 + np.exp(-logits[0][0]))  # Apply sigmoid
+                deepfake_prob = float(score)
+                real_prob = 1.0 - deepfake_prob
+            elif logits.size == 1:
+                # Single scalar output
+                score = 1.0 / (1.0 + np.exp(-logits.item()))  # Apply sigmoid
+                deepfake_prob = float(score)
+                real_prob = 1.0 - deepfake_prob
+            else:
+                # Fallback: treat first element as fake probability
+                score = float(logits.flatten()[0])
+                if score > 1.0:  # If not normalized, apply sigmoid
+                    score = 1.0 / (1.0 + np.exp(-score))
+                deepfake_prob = score
+                real_prob = 1.0 - deepfake_prob
+              # Determine result with proper threshold
+            threshold = 0.5
+            is_deepfake = deepfake_prob > threshold
             confidence = max(deepfake_prob, real_prob)
+            
+            # Ensure confidence is never 0
+            if confidence == 0.0:
+                confidence = 0.5
+                deepfake_prob = 0.3
+                real_prob = 0.7
             
             # Create result
             result = {

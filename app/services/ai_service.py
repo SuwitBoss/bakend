@@ -6,6 +6,7 @@ from fastapi import HTTPException
 import logging
 from .antispoofing_service import AntispoofingService
 from .deepfake_service import DeepfakeDetectionService
+from .yolov10_face_detector import YOLOv10FaceDetector
 import io
 from PIL import Image
 import torch
@@ -18,14 +19,17 @@ class AIService:
     
     def __init__(self):
         """Initialize AI service with required models and configurations"""
-        self.face_cascade = None
         self.logger = logging.getLogger(__name__)
+        
+        # Use YOLOv10 face detector instead of OpenCV
+        self.face_detector = YOLOv10FaceDetector()
         self.antispoofing_service = AntispoofingService()
         
         # Initialize deepfake detection service
         models_path = Path("/app/model")
         self.deepfake_service = DeepfakeDetectionService(models_path)
-          # Initialize new AI models (will be loaded lazily)
+        
+        # Initialize new AI models (will be loaded lazily)
         self.caption_processor = None
         self.caption_model = None
         self.sentiment_analyzer = None
@@ -34,10 +38,7 @@ class AIService:
     async def initialize(self):
         """Initialize async components and load models"""
         try:
-            # Load face detection models
-            self.face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            )
+            # YOLOv10 is already loaded in __init__
             self.logger.info("AI Service initialized successfully")
             
             # Initialize antispoofing service
@@ -63,9 +64,9 @@ class AIService:
             self.logger.error(f"Failed to convert bytes to image: {e}")
             raise ValueError(f"Invalid image data: {e}")
     
-    async def detect_faces(self, image: np.ndarray) -> List[Dict[str, Any]]:
+    def detect_faces(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """
-        Detect faces in the provided image
+        Detect faces in image
         
         Args:
             image: Input image as numpy array
@@ -77,31 +78,11 @@ class AIService:
             if image is None or image.size == 0:
                 raise ValueError("Invalid image provided")
             
-            # Convert to grayscale for face detection
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # Use YOLOv10 detector instead of OpenCV (YOLOv10 is not async)
+            faces = self.face_detector.detect_faces(image)
             
-            # Detect faces
-            faces = self.face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30)
-            )
-            
-            # Format results
-            detected_faces = []
-            for (x, y, w, h) in faces:
-                face_data = {
-                    "x": int(x),
-                    "y": int(y),
-                    "width": int(w),
-                    "height": int(h),
-                    "confidence": 0.85  # Placeholder confidence score
-                }
-                detected_faces.append(face_data)
-            
-            self.logger.info(f"Detected {len(detected_faces)} faces")
-            return detected_faces
+            self.logger.info(f"🎯 Detected {len(faces)} faces using YOLOv10")
+            return faces
             
         except Exception as e:
             self.logger.error(f"Face detection failed: {e}")
@@ -119,7 +100,7 @@ class AIService:
             Anti-spoofing results
         """
         try:
-            # Call antispoofing service
+            # Call antispoofing service (async)
             result = await self.antispoofing_service.detect_spoofing(image, face_bbox)
             return result
         except Exception as e:
@@ -136,11 +117,10 @@ class AIService:
         Returns:
             Dictionary with detected faces and metadata
         """
-        try:
-            # Convert bytes to image array
+        try:            # Convert bytes to image array
             image = self._bytes_to_image(image_bytes)
               # Use existing detect_faces method
-            faces = await self.detect_faces(image)
+            faces = self.detect_faces(image)
             
             return {
                 "faces": faces,
@@ -197,9 +177,8 @@ class AIService:
         try:
             # Convert bytes to image array
             image = self._bytes_to_image(image_bytes)
-            
-            # First detect faces
-            faces = await self.detect_faces(image)
+              # First detect faces
+            faces = self.detect_faces(image)
             
             if not faces:
                 return {
